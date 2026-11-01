@@ -20,6 +20,11 @@
 
   <!-- Đóng gói: dotnet publish App\App.csproj -p:PublishProfile=Portable (xem Properties\PublishProfiles\Portable.pubxml) -->
 
+  <!-- Hướng dẫn cho người dùng, đi kèm bản đóng gói -->
+  <ItemGroup>
+    <None Include="HuongDan.txt" CopyToOutputDirectory="Never" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!--
     Khi publish single-file, IncludeNativeLibrariesForSelfExtract gói cả node.exe của Playwright vào trong exe
     → Playwright không tìm thấy driver. Giữ thư mục .playwright nằm ngoài, cạnh AutoPopulate.exe.

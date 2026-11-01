@@ -1,0 +1,32 @@
+AUTOPOPULATE – KHAI BÁO THÔNG TIN TRƯỚC NHẬP CẢNH
+
+YÊU CẦU
+- Windows 10/11 64-bit.
+- Đã cài Google Chrome.
+- Không cần cài thêm .NET.
+
+CÀI ĐẶT
+1. Giải nén cả thư mục AutoPopulate ra nơi có quyền ghi, ví dụ D:\AutoPopulate hoặc Desktop.
+   KHÔNG đặt trong C:\Program Files (app không lưu được cấu hình ở đó).
+2. Chạy AutoPopulate.exe.
+   Giữ nguyên thư mục .playwright nằm cạnh AutoPopulate.exe (dùng để điều khiển Chrome).
+
+CÁCH DÙNG
+1. Nhập Email công ty, chọn Quốc tịch và Ngày đến dự kiến.
+2. Nạp danh sách khách:
+   - "Chọn file PDF...": chọn các file visa điện tử (tối đa 100 file mỗi lần), hoặc
+   - "Chọn file Excel...": chọn file danh sách khách (sheet INF_NHAN_SU), rồi nhập
+     Số thị thực (khách 1) và Hết hạn thị thực.
+3. Sửa các ô màu đỏ (nếu có), rồi bấm "Bắt đầu khai".
+4. Chrome mở ra: nhập CAPTCHA, app tự điền thông tin từng khách.
+   Kiểm tra lại trên Chrome rồi làm tiếp các bước còn lại (nộp, OTP).
+
+FILE APP TẠO RA
+- Data\settings.json      cấu hình (email, quốc tịch)
+- Data\Imports\           file Excel tạo từ các file PDF visa
+- Data\ChromeProfile\     profile Chrome riêng của app
+- Data\screenshots\       ảnh chụp khi gặp lỗi
+- File tải về từ Chrome (PDF tờ khai) lưu vào thư mục Downloads của Windows.
+
+CẬP NHẬT PHIÊN BẢN MỚI
+- Đóng app và Chrome của app, chép đè các file mới vào thư mục cũ (giữ lại thư mục Data).
