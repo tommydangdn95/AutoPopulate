@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Core\Core.csproj" />
+    <ProjectReference Include="..\Infrastructure\Infrastructure.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Tên file chạy: AutoPopulate.exe -->
+    <AssemblyName>AutoPopulate</AssemblyName>
+    <Product>AutoPopulate – Khai báo thông tin trước nhập cảnh</Product>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <!-- Đóng gói: dotnet publish App\App.csproj -p:PublishProfile=Portable (xem Properties\PublishProfiles\Portable.pubxml) -->
+
+  <!--
+    Khi publish single-file, IncludeNativeLibrariesForSelfExtract gói cả node.exe của Playwright vào trong exe
+    → Playwright không tìm thấy driver. Giữ thư mục .playwright nằm ngoài, cạnh AutoPopulate.exe.
+  -->
+  <Target Name="KeepPlaywrightOutOfBundle" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)"
+                             Condition="$([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').StartsWith('.playwright'))">
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+      <!-- Không cần trong bản phát hành: file gỡ lỗi và script tải trình duyệt riêng của Playwright (app dùng Chrome đã cài). -->
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb' Or '%(Filename)%(Extension)' == 'playwright.ps1'" />
+    </ItemGroup>
+  </Target>
+
+</Project>
