@@ -14,6 +14,13 @@ namespace Infrastructure.Automation
     {
         private static readonly TimeSpan UserWaitTimeout = TimeSpan.FromMinutes(15);
 
+        private const int FieldTimeoutMs = 5000;
+        /// <summary>Các nút chuyển bước có thể phải chờ site tải dữ liệu nên được chờ lâu hơn.</summary>
+        private const int StepTimeoutMs = 15000;
+        private const int NavigationTimeoutMs = 30000;
+        /// <summary>Số ô liên tiếp không tìm thấy thì thôi điền tiếp khách đó: site nhiều khả năng đã đổi.</summary>
+        private const int MaxConsecutiveMissingFields = 3;
+
         private IPlaywright? _playwright;
         private IBrowserContext? _context;
         private bool _contextClosed;
@@ -49,6 +56,12 @@ namespace Infrastructure.Automation
 
             await OpenDeclarationFormAsync(group, cancellationToken);
 
+            if (!await ConfirmFormIsRecognizedAsync(passengers, cancellationToken))
+            {
+                _host.ReportStatus("Đã dừng. Trình duyệt vẫn mở, bạn có thể làm tiếp bằng tay.");
+                return;
+            }
+
             var site = 0; // vị trí "Hành khách thứ #(site+1)" trên form
             var placed = new Dictionary<int, Passenger>();
 
@@ -79,7 +92,8 @@ namespace Infrastructure.Automation
                 message += $" {skipped} khách bị bỏ qua (xem cột Thông báo).";
             if (await SectionExistsAsync(site))
                 message += $" Xoá ô \"Hành khách thứ #{site + 1}\" còn trống trên trình duyệt trước khi tiếp tục.";
-            message += " Kiểm tra lại trên trình duyệt rồi bấm \"Tiếp theo\" để làm các bước còn lại.";
+            message += " Kiểm tra lại trên trình duyệt rồi bấm \"Tiếp theo\" để làm các bước còn lại." +
+                       " Tới trang Xem lại và nộp, app sẽ tự đối chiếu; nếu không thấy cửa sổ kết quả thì bấm \"Đối chiếu trang Xem lại\" trước khi nộp.";
             _host.ReportStatus(message, requiresUser: true);
         }
 
@@ -90,13 +104,26 @@ namespace Infrastructure.Automation
             if (_page is not { IsClosed: false } page || _contextClosed) return null;
             try
             {
-                if (!await page.GetByText(SiteTexts.ReviewPrompt).First.IsVisibleAsync()) return null;
-                return await page.Locator("body").InnerTextAsync();
+                if (await page.GetByText(SiteTexts.ReviewPrompt).First.IsVisibleAsync() || await LooksLikeReviewPageAsync(page))
+                    return await page.Locator("body").InnerTextAsync();
+                return null;
             }
             catch (PlaywrightException)
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Dự phòng khi site đổi câu nhắc của trang Xem lại: có tiêu đề "hành khách thứ #1" nhưng không còn ô nhập
+        /// (form nhập cũng có tiêu đề này nhưng còn ô nhập).
+        /// </summary>
+        private async Task<bool> LooksLikeReviewPageAsync(IPage page)
+        {
+            var heading = page.GetByText(new Regex(SiteTexts.FirstPassengerHeadingPattern, RegexOptions.IgnoreCase)).First;
+            return await heading.IsVisibleAsync()
+                   && await page.Locator($"input[name='0_{F.PassportNumber}']").CountAsync() == 0
+                   && await page.Locator("input[type='text'], input:not([type])").CountAsync() == 0;
         }
 
         /// <summary>
@@ -208,7 +235,9 @@ namespace Infrastructure.Automation
             }
 
             _page = _context.Pages.FirstOrDefault(p => !p.IsClosed) ?? await _context.NewPageAsync();
-            _page.SetDefaultTimeout(15000);
+            // Mặc định cho thao tác trên ô: site bình thường thì điền ngay, chỉ chờ hết khi không tìm thấy ô.
+            _page.SetDefaultTimeout(FieldTimeoutMs);
+            _page.SetDefaultNavigationTimeout(NavigationTimeoutMs);
             await _page.BringToFrontAsync();
         }
 
@@ -245,7 +274,7 @@ namespace Infrastructure.Automation
             await SelectVietnameseAsync();
 
             // Bước 2: Tạo và nộp tờ khai.
-            await Page.GetByText(SiteTexts.CreateDeclaration).First.ClickAsync();
+            await Page.GetByText(SiteTexts.CreateDeclaration).First.ClickAsync(new LocatorClickOptions { Timeout = StepTimeoutMs });
 
             // Bước 3: CAPTCHA – người dùng tự nhập.
             _host.ReportStatus("Vui lòng nhập CAPTCHA trên trình duyệt rồi bấm \"Xác minh\".", requiresUser: true);
@@ -258,7 +287,8 @@ namespace Infrastructure.Automation
             _host.ReportStatus($"Chọn quốc tịch: {group.Nationality.DisplayName}");
             var nationalityInput = Page.GetByRole(AriaRole.Combobox).First;
             await SelectAutocompleteAsync(nationalityInput, group.Nationality.DisplayName, group.Nationality.SearchText);
-            await Page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = SiteTexts.Next, Exact = true }).ClickAsync();
+            await Page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = SiteTexts.Next, Exact = true })
+                .ClickAsync(new LocatorClickOptions { Timeout = StepTimeoutMs });
 
             var firstPassport = Input(0, F.PassportNumber);
             await WaitUntilAsync(async () =>
@@ -266,6 +296,59 @@ namespace Infrastructure.Automation
                 await WaitIfCaptchaAsync(ct);
                 return await firstPassport.CountAsync() > 0;
             }, TimeSpan.FromMinutes(2), ct, "Không mở được form thông tin hành khách.");
+        }
+
+        /// <summary>
+        /// Rà các ô cần điền ngay khi vào form. Thiếu ô thì báo một lần cho người dùng quyết định,
+        /// thay vì để họ chờ lỗi từng ô. Trả về false nếu người dùng chọn dừng.
+        /// </summary>
+        private async Task<bool> ConfirmFormIsRecognizedAsync(IReadOnlyList<Passenger> passengers, CancellationToken ct)
+        {
+            var missing = await FindMissingFormFieldsAsync(passengers.Count > 1);
+            // Form có thể chưa vẽ xong: thử lại trước khi kết luận.
+            for (var attempt = 0; missing.Count > 0 && attempt < 3; attempt++)
+            {
+                await Task.Delay(1000, ct);
+                missing = await FindMissingFormFieldsAsync(passengers.Count > 1);
+            }
+            if (missing.Count == 0) return true;
+
+            _host.Log("Không thấy các ô trên form: " + string.Join(", ", missing));
+            await SaveScreenshotAsync("form-khac-thuong");
+            var errors = missing.Select(field => new SiteFieldError(field, "Không thấy trên form")).ToList();
+            var decision = await _host.AskUserAsync(new AttentionRequest(passengers[0],
+                $"Site có thể đã đổi giao diện – không thấy {missing.Count} ô trên form. " +
+                "Bấm Tiếp tục để điền các ô còn lại, hoặc Dừng để khai tay trên trình duyệt", errors, AllowSkip: false), ct);
+            return decision != UserDecision.Stop;
+        }
+
+        private async Task<List<string>> FindMissingFormFieldsAsync(bool needAddPassenger)
+        {
+            var checks = new List<(string Name, ILocator Locator)>
+            {
+                ("Ngày đến", Input(0, F.ArrivalDate)),
+                ("Loại hộ chiếu", Input(0, F.PassportType)),
+                ("Số hộ chiếu", Input(0, F.PassportNumber)),
+                ("Ngày hết hạn hộ chiếu", Input(0, F.PassportExpiry)),
+                ("Giới tính", Page.Locator("input[type='radio'][value='male']")),
+                ("Họ", Page.GetByPlaceholder(SiteTexts.SurnamePlaceholder)),
+                ("Tên", Page.GetByPlaceholder(SiteTexts.GivenNamePlaceholder)),
+                ("Ngày sinh", Input(0, F.DateOfBirth)),
+                ("Số điện thoại", Input(0, F.Phone)),
+                ("Email", Input(0, F.Email)),
+                ("Xác nhận đã đọc thông tin visa", Page.Locator("label").Filter(new LocatorFilterOptions { HasText = SiteTexts.VisaAcknowledge })),
+                ("Loại thị thực", Input(0, F.VisaType)),
+                ("Số thị thực", Input(0, F.VisaNumber)),
+                ("Ngày cấp thị thực", Input(0, F.VisaIssueDate)),
+                ("Ngày hết hạn thị thực", Input(0, F.VisaExpiry))
+            };
+            if (needAddPassenger)
+                checks.Add(("Nút Thêm hành khách", Page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { NameRegex = new Regex(SiteTexts.AddPassenger) })));
+
+            var missing = new List<string>();
+            foreach (var (name, locator) in checks)
+                if (await locator.CountAsync() == 0) missing.Add(name);
+            return missing;
         }
 
         private async Task SelectVietnameseAsync()
@@ -353,18 +436,27 @@ namespace Infrastructure.Automation
         private async Task<List<SiteFieldError>> FillPassengerAsync(int site, Passenger p, GroupSettings group)
         {
             var errors = new List<SiteFieldError>();
+            var consecutiveMissing = 0;
 
             async Task Step(string field, Func<Task> action)
             {
+                // Nhiều ô liên tiếp không tìm thấy: site đã đổi, không để người dùng chờ từng ô còn lại.
+                if (consecutiveMissing >= MaxConsecutiveMissingFields) return;
                 try
                 {
                     await action();
+                    consecutiveMissing = 0;
                 }
                 catch (Exception ex) when (ex is PlaywrightException or TimeoutException or FillException)
                 {
                     var message = ex is FillException ? ex.Message : "App không điền được trường này: " + FirstLine(ex.Message);
                     errors.Add(new SiteFieldError(field, message));
                     _host.Log($"[STT {p.No}] {field}: {FirstLine(ex.Message)}");
+
+                    consecutiveMissing = ex is TimeoutException ? consecutiveMissing + 1 : 0;
+                    if (consecutiveMissing >= MaxConsecutiveMissingFields)
+                        errors.Add(new SiteFieldError("Dừng điền khách này",
+                            $"{MaxConsecutiveMissingFields} ô liên tiếp không tìm thấy, site có thể đã đổi giao diện. Hãy điền tay trên trình duyệt."));
                 }
             }
 
@@ -407,7 +499,7 @@ namespace Infrastructure.Automation
             while (true)
             {
                 await Page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { NameRegex = new Regex(SiteTexts.AddPassenger) })
-                    .ClickAsync();
+                    .ClickAsync(new LocatorClickOptions { Timeout = StepTimeoutMs });
                 try
                 {
                     await Input(site, F.PassportNumber).WaitForAsync(new LocatorWaitForOptions
@@ -663,10 +755,10 @@ namespace Infrastructure.Automation
                 var folder = AppPaths.ScreenshotFolder;
                 Directory.CreateDirectory(folder);
                 var path = Path.Combine(folder, $"{DateTime.Now:yyyyMMdd_HHmmss}_{name}.png");
-                await Page.ScreenshotAsync(new PageScreenshotOptions { Path = path, FullPage = true });
+                await Page.ScreenshotAsync(new PageScreenshotOptions { Path = path, FullPage = true, Timeout = StepTimeoutMs });
                 _host.Log($"Đã chụp màn hình: {path}");
             }
-            catch (PlaywrightException ex)
+            catch (Exception ex) when (ex is PlaywrightException or TimeoutException)
             {
                 _host.Log("Không chụp được màn hình: " + FirstLine(ex.Message));
             }

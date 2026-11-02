@@ -1092,7 +1092,9 @@ namespace App
             var text = _automation is null ? null : await _automation.ReadReviewPageAsync();
             if (text is null)
             {
-                MessageBox.Show(this, "Chrome chưa ở trang \"Xem lại và nộp\".\nBấm nút này khi đã tới trang đó.",
+                MessageBox.Show(this, "App không thấy Chrome đang ở trang \"Xem lại và nộp\".\nBấm nút này khi đã tới trang đó.\n\n" +
+                                      "Nếu Chrome đúng là đang ở trang đó thì site có thể đã đổi giao diện: " +
+                                      "hãy tự kiểm tra kỹ từng khách với file nguồn trước khi nộp.",
                     "Đối chiếu", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -1140,9 +1142,11 @@ namespace App
             }
             gridPassengers.Refresh();
 
-            var summary = report.AllOk
-                ? $"✔ Đối chiếu xong: {report.CardCount} khách, {report.Checks.Count} trường đều khớp. Có thể nộp."
-                : $"✖ Đối chiếu: {report.FailedCount} trường sai – xem cửa sổ kết quả. ĐỪNG nộp khi còn sai.";
+            var summary = report.CardCount == 0
+                ? "✖ Không đọc được danh sách khách trên trang – site có thể đã đổi giao diện. Hãy tự kiểm tra kỹ trước khi nộp."
+                : report.AllOk
+                    ? $"✔ Đối chiếu xong: {report.CardCount} khách, {report.Checks.Count} trường đều khớp. Có thể nộp."
+                    : $"✖ Đối chiếu: {report.FailedCount} trường sai – xem cửa sổ kết quả. ĐỪNG nộp khi còn sai.";
             SetStatus(summary, report.AllOk ? Color.DarkGreen : Color.Firebrick);
             Log(summary);
             foreach (var c in report.Checks.Where(c => !c.Ok))

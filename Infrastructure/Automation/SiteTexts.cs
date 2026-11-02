@@ -25,6 +25,9 @@ namespace Infrastructure.Automation
         /// <summary>Dòng chỉ có ở trang "Xem lại và nộp" (dòng "Xem lại và nộp" của thanh bước thì trang nào cũng có).</summary>
         public const string ReviewPrompt = "Vui lòng xác nhận thông tin bên dưới";
 
+        /// <summary>Tiêu đề hành khách đầu tiên (có ở cả form nhập lẫn trang Xem lại).</summary>
+        public const string FirstPassengerHeadingPattern = @"hành khách thứ\s*#\s*1(?!\d)";
+
         /// <summary>Hậu tố thuộc tính name của ô nhập: name="{index}_{field}".</summary>
         public static class Fields
         {

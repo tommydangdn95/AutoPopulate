@@ -33,8 +33,10 @@ namespace App
                 Margin = new Padding(10, 10, 10, 6),
                 Font = new Font(Font.FontFamily, 11F, FontStyle.Bold),
                 ForeColor = report.AllOk ? Color.DarkGreen : Color.Firebrick,
-                Text = report.AllOk
-                    ? $"✔ KHỚP: {report.CardCount} hành khách trên trang, {report.Checks.Count} trường đều đúng với nguồn. Có thể nộp."
+                Text = report.CardCount == 0
+                    ? "✖ KHÔNG ĐỌC ĐƯỢC danh sách khách trên trang: site có thể đã đổi giao diện.\nApp chưa đối chiếu được. Hãy tự kiểm tra kỹ từng khách với file nguồn trước khi nộp."
+                    : report.AllOk
+                    ?$"✔ KHỚP: {report.CardCount} hành khách trên trang, {report.Checks.Count} trường đều đúng với nguồn. Có thể nộp."
                     : $"✖ CÓ SAI LỆCH: {report.FailedCount} trường, {failedPassengers} hành khách (trang có {report.CardCount} khách, danh sách có {passengerCount} khách).\n" +
                       "Sửa trên Chrome rồi quay lại trang Xem lại để đối chiếu lại. ĐỪNG nộp khi còn sai."
             };
