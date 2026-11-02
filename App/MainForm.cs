@@ -195,15 +195,51 @@ namespace App
             btnStart.FlatAppearance.BorderSize = 0;
             btnStart.EnabledChanged += (_, _) => ApplyStartButtonStyle();
             ApplyStartButtonStyle();
+
+            // Màu theo công dụng: chữ trắng trên nền đậm cho dễ đọc.
+            StyleButton(btnBrowse, Color.FromArgb(0, 120, 212));
+            StyleButton(btnBrowseExcel, Color.FromArgb(33, 115, 70));
+            StyleButton(btnNewGroup, Color.FromArgb(123, 31, 162));
+            StyleButton(btnReload, Color.FromArgb(0, 131, 143));
+            StyleButton(btnValidate, Color.FromArgb(63, 81, 181));
+            StyleButton(btnDelete, Color.FromArgb(198, 40, 40));
+            StyleButton(btnContinue, Color.FromArgb(46, 125, 50));
+            StyleButton(btnRefill, Color.FromArgb(21, 101, 192));
+            StyleButton(btnSkip, Color.FromArgb(191, 97, 0));
+            StyleButton(btnStop, Color.FromArgb(84, 110, 122));
+            StyleButton(btnVerifyReview, Color.FromArgb(94, 53, 177));
         }
+
+        /// <summary>Nút phẳng màu theo công dụng, sáng lên khi rê chuột; bị khoá thì chuyển xám để biết không bấm được.</summary>
+        private static void StyleButton(Button button, Color color)
+        {
+            button.FlatStyle = FlatStyle.Flat;
+            button.FlatAppearance.BorderSize = 0;
+            button.FlatAppearance.MouseOverBackColor = ControlPaint.Light(color, 0.25f);
+            button.FlatAppearance.MouseDownBackColor = ControlPaint.Dark(color, 0.1f);
+            button.UseVisualStyleBackColor = false;
+
+            void Apply()
+            {
+                button.BackColor = button.Enabled ? color : DisabledButtonBack;
+                button.ForeColor = button.Enabled ? Color.White : DisabledButtonText;
+                button.Cursor = button.Enabled ? Cursors.Hand : Cursors.No;
+            }
+            button.EnabledChanged += (_, _) => Apply();
+            Apply();
+        }
+
+        private static readonly Color DisabledButtonBack = Color.FromArgb(200, 200, 200);
+        private static readonly Color DisabledButtonText = Color.FromArgb(120, 120, 120);
 
         private void ApplyStartButtonStyle()
         {
-            btnStart.BackColor = !btnStart.Enabled ? Color.FromArgb(200, 200, 200)
-                : IsSessionActive ? Color.FromArgb(192, 0, 0)
-                : Color.FromArgb(31, 56, 100);
-            btnStart.ForeColor = btnStart.Enabled ? Color.White : Color.FromArgb(120, 120, 120);
+            var color = IsSessionActive ? Color.FromArgb(192, 0, 0) : Color.FromArgb(0, 137, 90);
+            btnStart.BackColor = btnStart.Enabled ? color : DisabledButtonBack;
+            btnStart.ForeColor = btnStart.Enabled ? Color.White : DisabledButtonText;
             btnStart.Cursor = btnStart.Enabled ? Cursors.Hand : Cursors.No;
+            btnStart.FlatAppearance.MouseOverBackColor = ControlPaint.Light(color, 0.25f);
+            btnStart.FlatAppearance.MouseDownBackColor = ControlPaint.Dark(color, 0.1f);
         }
 
         /// <summary>Đang điền form hoặc Chrome của app còn mở: nút chính là nút "Dừng".</summary>
