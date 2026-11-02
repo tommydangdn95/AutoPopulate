@@ -260,7 +260,7 @@
             //
             // btnBrowseExcel
             //
-            btnBrowseExcel.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+            btnBrowseExcel.Anchor = AnchorStyles.Left;
             btnBrowseExcel.Name = "btnBrowseExcel";
             btnBrowseExcel.Size = new Size(124, 28);
             btnBrowseExcel.TabIndex = 11;

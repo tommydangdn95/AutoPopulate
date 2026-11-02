@@ -251,6 +251,8 @@ namespace App
             btnStart.Text = IsSessionActive ? "■ Dừng" : "▶ Bắt đầu khai";
             btnStart.Enabled = !_stopInProgress && (IsSessionActive || _dataValid);
             ApplyStartButtonStyle();
+            // Chưa có khách thì không có gì để đối chiếu.
+            btnVerifyReview.Enabled = _passengers.Count > 0;
         }
 
         private void LoadSettingsToUi()

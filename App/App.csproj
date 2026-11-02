@@ -15,7 +15,7 @@
     <!-- Tên file chạy: AutoPopulate.exe -->
     <AssemblyName>AutoPopulate</AssemblyName>
     <Product>AutoPopulate – Khai báo thông tin trước nhập cảnh</Product>
-    <Version>1.1.1</Version>
+    <Version>1.1.2</Version>
   </PropertyGroup>
 
   <!-- Đóng gói: dotnet publish App\App.csproj -p:PublishProfile=Portable (xem Properties\PublishProfiles\Portable.pubxml) -->
