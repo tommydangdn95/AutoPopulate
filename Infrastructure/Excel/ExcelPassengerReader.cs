@@ -137,7 +137,10 @@ namespace Infrastructure.Excel
                 // File Excel tạo từ PDF ghi tên file PDF gốc ở đầu cột Ghi chú: "xxx.pdf | ...".
                 var firstNotePart = p.Note.Split(" | ")[0].Trim();
                 if (firstNotePart.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
-                    p.SourceFile = firstNotePart;
+                {
+                    p.SourceFile = Path.GetFileName(firstNotePart);
+                    p.SourcePath = firstNotePart;
+                }
 
                 p.DateOfBirth = Date(DateOfBirth, nameof(p.DateOfBirth));
                 p.PassportExpiry = Date(PassportExpiry, nameof(p.PassportExpiry));

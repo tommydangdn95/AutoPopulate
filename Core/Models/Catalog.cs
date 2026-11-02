@@ -8,6 +8,9 @@ namespace Core.Models
         public const string DefaultPassportType = "P - Hộ chiếu phổ thông";
         public const string EVisa = "Thị thực điện tử (E-Visa)";
 
+        /// <summary>Lựa chọn mặc định cho ô "Mối quan hệ với người khai" (khách thứ 2 trở đi).</summary>
+        public const string DefaultRelationship = "Đồng nghiệp";
+
         public static IReadOnlyList<string> PassportTypes { get; } =
         [
             DefaultPassportType,

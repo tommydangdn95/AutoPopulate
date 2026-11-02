@@ -19,16 +19,33 @@ namespace Infrastructure.Automation
         private bool _contextClosed;
         private IPage? _page;
         private IAutomationHost _host = null!;
+        private CancellationTokenSource? _reviewWatch;
 
         private IPage Page => _page ?? throw new InvalidOperationException("Trình duyệt chưa được mở.");
+
+        public bool IsBrowserOpen => _context is not null && !_contextClosed;
 
         private enum Outcome { Filled, Skipped, Stop }
 
         public async Task RunAsync(GroupSettings group, IReadOnlyList<Passenger> passengers, IAutomationHost host,
             CancellationToken cancellationToken)
         {
+            try
+            {
+                await RunCoreAsync(group, passengers, host, cancellationToken);
+            }
+            catch (PlaywrightException ex) when (_contextClosed || ex.Message.Contains("has been closed"))
+            {
+                // Chrome bị đóng giữa chừng: kết thúc bình thường, app được báo qua IAutomationHost.BrowserClosed.
+            }
+        }
+
+        private async Task RunCoreAsync(GroupSettings group, IReadOnlyList<Passenger> passengers, IAutomationHost host,
+            CancellationToken cancellationToken)
+        {
             _host = host;
             await OpenBrowserAsync();
+            StartReviewWatcher();
 
             await OpenDeclarationFormAsync(group, cancellationToken);
 
@@ -66,8 +83,61 @@ namespace Infrastructure.Automation
             _host.ReportStatus(message, requiresUser: true);
         }
 
+        // ------------------------------------------------------------------ trang "Xem lại và nộp"
+
+        public async Task<string?> ReadReviewPageAsync()
+        {
+            if (_page is not { IsClosed: false } page || _contextClosed) return null;
+            try
+            {
+                if (!await page.GetByText(SiteTexts.ReviewPrompt).First.IsVisibleAsync()) return null;
+                return await page.Locator("body").InnerTextAsync();
+            }
+            catch (PlaywrightException)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Theo dõi Chrome (người dùng tự bấm qua các bước sau khi app điền xong): mỗi lần vào trang
+        /// "Xem lại và nộp" thì báo cho app đối chiếu. Chạy tới khi đóng trình duyệt hoặc lần khai mới.
+        /// </summary>
+        private void StartReviewWatcher()
+        {
+            _reviewWatch?.Cancel();
+            _reviewWatch = new CancellationTokenSource();
+            _ = WatchReviewPageAsync(_reviewWatch.Token);
+        }
+
+        private async Task WatchReviewPageAsync(CancellationToken ct)
+        {
+            var onReviewPage = false;
+            try
+            {
+                while (!_contextClosed)
+                {
+                    await Task.Delay(1500, ct);
+                    var text = await ReadReviewPageAsync();
+                    if (text is not null && !onReviewPage)
+                    {
+                        // Chờ trang hiển thị đủ các hành khách rồi đọc lại.
+                        await Task.Delay(800, ct);
+                        text = await ReadReviewPageAsync();
+                        if (text is not null) _host.ReviewPageReached(text);
+                    }
+                    onReviewPage = text is not null;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Lần khai mới hoặc đóng trình duyệt.
+            }
+        }
+
         public async ValueTask DisposeAsync()
         {
+            _reviewWatch?.Cancel();
             if (_context is not null && !_contextClosed)
             {
                 try { await _context.CloseAsync(); }
@@ -126,7 +196,11 @@ namespace Infrastructure.Automation
                         FirstLine(ex.Message), ex);
                 }
                 _contextClosed = false;
-                _context.Close += (_, _) => _contextClosed = true;
+                _context.Close += (_, _) =>
+                {
+                    _contextClosed = true;
+                    _host.BrowserClosed();
+                };
                 // Lưu file tải về bằng tên gốc vào Data\Downloads (áp dụng cả tab/popup mới).
                 _context.Page += (_, page) => page.Download += OnDownload;
                 foreach (var existing in _context.Pages)

@@ -53,7 +53,7 @@ namespace Infrastructure.Pdf
         private static readonly string[] DateFormats = ["dd/MM/yyyy", "d/M/yyyy"];
 
         /// <summary>Tách dữ liệu từ chữ của PDF. Trả về khách (có thể thiếu trường) và danh sách trường thiếu.</summary>
-        public static (Passenger Passenger, List<string> Problems) Parse(string pdfText, string fileName)
+        public static (Passenger Passenger, List<string> Problems) Parse(string pdfText, string sourcePath)
         {
             var text = StripDiacritics(pdfText);
             var problems = new List<string>();
@@ -83,7 +83,10 @@ namespace Infrastructure.Pdf
             p.VisaValidFrom = Date(ValidFromRegex(), text, "Ngày hiệu lực thị thực", problems);
             p.VisaExpiry = Date(VisaExpiryRegex(), text, "Ngày hết hạn thị thực", problems);
 
-            var note = new List<string> { fileName };
+            // Đường dẫn đầy đủ của PDF ở đầu Ghi chú: giữ được file nguồn của khách qua file Excel trung gian.
+            p.SourcePath = sourcePath;
+            p.SourceFile = Path.GetFileName(sourcePath);
+            var note = new List<string> { sourcePath };
             if (Match(NationalityRegex(), text) is { } nationality)
                 note.Add($"Quốc tịch trên visa: {nationality.Trim()}");
             if (problems.Count > 0)
@@ -131,7 +134,6 @@ namespace Infrastructure.Pdf
     {
         public VisaPdfResult Extract(string path)
         {
-            var fileName = Path.GetFileName(path);
             string text;
             try
             {
@@ -149,7 +151,7 @@ namespace Infrastructure.Pdf
             if (string.IsNullOrWhiteSpace(text))
                 return new VisaPdfResult(path, null, ["PDF không có lớp chữ (có thể là ảnh scan) – cần nhập tay"]);
 
-            var (passenger, problems) = EVisaPdfParser.Parse(text, fileName);
+            var (passenger, problems) = EVisaPdfParser.Parse(text, path);
             return new VisaPdfResult(path, passenger, problems);
         }
     }

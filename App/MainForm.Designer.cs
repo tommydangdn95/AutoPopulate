@@ -83,6 +83,7 @@
             btnRefill = new Button();
             btnSkip = new Button();
             btnStop = new Button();
+            btnVerifyReview = new Button();
             lblStatus = new Label();
             grpSettings.SuspendLayout();
             tlpSettings.SuspendLayout();
@@ -578,6 +579,7 @@
             flpAttention.Controls.Add(btnRefill);
             flpAttention.Controls.Add(btnSkip);
             flpAttention.Controls.Add(btnStop);
+            flpAttention.Controls.Add(btnVerifyReview);
             flpAttention.Dock = DockStyle.Fill;
             flpAttention.Location = new Point(0, 70);
             flpAttention.Name = "flpAttention";
@@ -619,11 +621,20 @@
             //
             btnStop.Enabled = false;
             btnStop.Name = "btnStop";
-            btnStop.Size = new Size(120, 36);
+            btnStop.Size = new Size(200, 36);
             btnStop.TabIndex = 3;
-            btnStop.Text = "■ Dừng";
+            btnStop.Text = "⏸ Dừng điền (giữ Chrome)";
             btnStop.UseVisualStyleBackColor = true;
             btnStop.Click += btnStop_Click;
+            //
+            // btnVerifyReview
+            //
+            btnVerifyReview.Name = "btnVerifyReview";
+            btnVerifyReview.Size = new Size(220, 36);
+            btnVerifyReview.TabIndex = 4;
+            btnVerifyReview.Text = "🔎 Đối chiếu trang Xem lại";
+            btnVerifyReview.UseVisualStyleBackColor = true;
+            btnVerifyReview.Click += btnVerifyReview_Click;
             //
             // lblStatus
             //
@@ -719,6 +730,7 @@
         private Button btnRefill;
         private Button btnSkip;
         private Button btnStop;
+        private Button btnVerifyReview;
         private Label lblStatus;
     }
 }

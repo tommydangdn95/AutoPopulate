@@ -20,7 +20,10 @@ namespace Infrastructure.Automation
         public const string VisaAcknowledge = "Tôi đã đọc";
 
         /// <summary>Lựa chọn mặc định cho ô "Mối quan hệ với người khai" (khách thứ 2 trở đi).</summary>
-        public const string DefaultRelationship = "Đồng nghiệp";
+        public const string DefaultRelationship = Core.Models.Catalog.DefaultRelationship;
+
+        /// <summary>Dòng chỉ có ở trang "Xem lại và nộp" (dòng "Xem lại và nộp" của thanh bước thì trang nào cũng có).</summary>
+        public const string ReviewPrompt = "Vui lòng xác nhận thông tin bên dưới";
 
         /// <summary>Hậu tố thuộc tính name của ô nhập: name="{index}_{field}".</summary>
         public static class Fields

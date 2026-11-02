@@ -29,4 +29,8 @@ FILE APP TẠO RA
 - File tải về từ Chrome (PDF tờ khai) lưu vào thư mục Downloads của Windows.
 
 CẬP NHẬT PHIÊN BẢN MỚI
-- Đóng app và Chrome của app, chép đè các file mới vào thư mục cũ (giữ lại thư mục Data).
+- App tự kiểm tra khi mở (cần có mạng). Nếu có bản mới, app hiện nội dung thay đổi và hỏi
+  "Cập nhật ngay" hoặc "Để lần sau".
+- Chọn "Để lần sau": nút màu cam "Cập nhật vX.Y.Z" nằm trên thanh tiêu đề, bấm khi nào rảnh.
+- Đang khai (Chrome của app còn mở) thì bấm "Dừng" hoặc đóng Chrome trước khi cập nhật.
+- Cập nhật không đụng tới thư mục Data (cấu hình, dữ liệu của bạn).

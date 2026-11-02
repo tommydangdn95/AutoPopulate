@@ -9,7 +9,11 @@ namespace Core.Models
         Filling,
         NeedsAttention,
         Filled,
-        Skipped
+        Skipped,
+        /// <summary>Trang "Xem lại và nộp" khớp với file nguồn.</summary>
+        Verified,
+        /// <summary>Trang "Xem lại và nộp" khác với file nguồn.</summary>
+        VerifyFailed
     }
 
     /// <summary>
@@ -25,6 +29,9 @@ namespace Core.Models
 
         /// <summary>Tên file PDF visa gốc nếu khách được nhập từ PDF (rỗng nếu nhập tay trong Excel).</summary>
         public string SourceFile { get; set; } = "";
+
+        /// <summary>Đường dẫn file nguồn của khách: file PDF riêng, hoặc file Excel danh sách.</summary>
+        public string SourcePath { get; set; } = "";
 
         /// <summary>Nguồn dữ liệu để ghi vào thông báo lỗi, vd " [file VietNam_eVisa_xxx.pdf]".</summary>
         public string SourceSuffix => SourceFile == "" ? "" : $" [file {SourceFile}]";
@@ -74,6 +81,8 @@ namespace Core.Models
             PassengerState.NeedsAttention => "Cần sửa",
             PassengerState.Filled => "Đã điền",
             PassengerState.Skipped => "Bỏ qua",
+            PassengerState.Verified => "Đã đối chiếu",
+            PassengerState.VerifyFailed => "Sai so với nguồn",
             _ => State.ToString()
         };
     }

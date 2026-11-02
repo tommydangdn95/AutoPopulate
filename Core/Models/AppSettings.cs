@@ -10,6 +10,9 @@ namespace Core.Models
 
         public string HomeUrl { get; set; } = "https://prearrival.immigration.gov.vn/home-page";
 
+        /// <summary>Nơi kiểm tra phiên bản mới (GitHub Releases).</summary>
+        public string UpdateFeedUrl { get; set; } = "https://api.github.com/repos/tommydangdn95/AutoPopulate/releases/latest";
+
         /// <summary>Trình duyệt dùng để chạy: "msedge" hoặc "chrome" (đã cài sẵn trên máy).</summary>
         public string BrowserChannel { get; set; } = "chrome";
 

@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Media;
 using Core.Abstractions;
 using Core.Models;
+using Core.Review;
 using Core.Services;
 using Core.Validation;
 using Infrastructure;
@@ -36,6 +37,13 @@ namespace App
         private bool _dataValid;
 
         /// <summary>Nguồn của danh sách khách đang hiển thị.</summary>
+        /// <summary>Đã yêu cầu dừng hoặc Chrome đã đóng: lỗi của lần chạy đang kết thúc được bỏ qua.</summary>
+        private bool _stopRequested;
+        /// <summary>Đang đóng Chrome bằng nút Dừng.</summary>
+        private bool _stopInProgress;
+        private bool _verifying;
+        private ReviewResultForm? _reviewForm;
+
         private enum DataOrigin { None, Excel, Pdf }
         private DataOrigin _origin = DataOrigin.None;
 
@@ -53,8 +61,9 @@ namespace App
         }
 
         public MainForm(ISettingsStore settingsStore, IPassengerReader reader,
-            IVisaPdfExtractor pdfExtractor, IPassengerWriter passengerWriter)
+            IVisaPdfExtractor pdfExtractor, IPassengerWriter passengerWriter, IUpdateService updateService)
         {
+            _updateService = updateService;
             _settingsStore = settingsStore;
             _reader = reader;
             _pdfExtractor = pdfExtractor;
@@ -67,9 +76,20 @@ namespace App
             SetupStartButtonStyle();
             _initialized = true;
             RunValidation(showSummary: false);
+            SetupAutoUpdate();
         }
 
         // ------------------------------------------------------------------ khởi tạo
+
+        /// <summary>File nguồn của khách (PDF riêng hoặc file Excel): hiện tên file, bấm để mở, rê chuột xem đường dẫn.</summary>
+        private readonly DataGridViewLinkColumn colSource = new()
+        {
+            DataPropertyName = nameof(Passenger.SourcePath),
+            HeaderText = "File nguồn",
+            Name = "colSource",
+            ReadOnly = true,
+            TrackVisitedState = false
+        };
 
         private readonly DataGridViewTextBoxColumn colPhone = new()
         {
@@ -95,6 +115,8 @@ namespace App
             SetupDeleteShortcuts();
             // SĐT do app tự sinh cho từng khách (không có trong Excel), vẫn sửa tay được.
             gridPassengers.Columns.Insert(colMessage.Index, colPhone);
+            gridPassengers.Columns.Add(colSource);
+            gridPassengers.CellContentClick += gridPassengers_CellContentClick;
 
             // Kiểu Standard vẽ theo theme Windows và bỏ qua BackColor của ô, nên ô lỗi không
             // hiện màu đỏ. Kiểu Flat tôn trọng BackColor.
@@ -177,9 +199,22 @@ namespace App
 
         private void ApplyStartButtonStyle()
         {
-            btnStart.BackColor = btnStart.Enabled ? Color.FromArgb(31, 56, 100) : Color.FromArgb(200, 200, 200);
+            btnStart.BackColor = !btnStart.Enabled ? Color.FromArgb(200, 200, 200)
+                : IsSessionActive ? Color.FromArgb(192, 0, 0)
+                : Color.FromArgb(31, 56, 100);
             btnStart.ForeColor = btnStart.Enabled ? Color.White : Color.FromArgb(120, 120, 120);
             btnStart.Cursor = btnStart.Enabled ? Cursors.Hand : Cursors.No;
+        }
+
+        /// <summary>Đang điền form hoặc Chrome của app còn mở: nút chính là nút "Dừng".</summary>
+        private bool IsSessionActive => _running || _automation is { IsBrowserOpen: true };
+
+        /// <summary>Nút chính: "Bắt đầu khai" (chỉ bật khi dữ liệu hợp lệ) hoặc "Dừng" (khi Chrome đang mở).</summary>
+        private void UpdateStartButton()
+        {
+            btnStart.Text = IsSessionActive ? "■ Dừng" : "▶ Bắt đầu khai";
+            btnStart.Enabled = !_stopInProgress && (IsSessionActive || _dataValid);
+            ApplyStartButtonStyle();
         }
 
         private void LoadSettingsToUi()
@@ -242,6 +277,9 @@ namespace App
             gridPassengers.DataSource = _passengers;
             _origin = origin;
             _originalVisa = _passengers.ToDictionary(p => p, p => (p.VisaNumber, p.VisaExpiry));
+            // Khách không có file PDF riêng → file nguồn là chính file Excel này.
+            foreach (var p in _passengers.Where(p => !Path.IsPathFullyQualified(p.SourcePath)))
+                p.SourcePath = path;
             ResetManualVisaInputs();
             ApplySearchFilter();
 
@@ -334,7 +372,7 @@ namespace App
                 if (unreadable > 0 || partial > 0)
                     MessageBox.Show(this,
                         $"Đã nhập {passengers.Count}/{results.Count} file PDF." +
-                        (partial > 0 ? $"\n• {partial} file thiếu một số trường: ô đỏ trong bảng – sửa trực tiếp trong bảng, hoặc kiểm tra lại file PDF (tên file ở cột Ghi chú)." : "") +
+                        (partial > 0 ? $"\n• {partial} file thiếu một số trường: ô đỏ trong bảng – sửa trực tiếp trong bảng, hoặc bấm vào cột File nguồn để xem lại file PDF." : "") +
                         (unreadable > 0 ? $"\n• {unreadable} file không đọc được (xem khung log)." : ""),
                         "Đọc PDF", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
@@ -402,7 +440,7 @@ namespace App
             var invalid = active.Where(p => p.HasErrors).ToList();
             var warnings = active.Count(p => p.Issues.Any(i => i.IsWarning));
             _dataValid = groupErrors.Count == 0 && invalid.Count == 0;
-            btnStart.Enabled = _dataValid && !_running;
+            UpdateStartButton();
 
             if (showSummary)
             {
@@ -441,6 +479,118 @@ namespace App
         }
 
         private void btnValidate_Click(object sender, EventArgs e) => RunValidation(showSummary: true);
+
+        // ------------------------------------------------------------------ tự động cập nhật
+
+        /// <summary>Kiểm tra lại định kỳ khi app đang mở: chỉ hiện nút trên thanh tiêu đề, không hiện popup.</summary>
+        private static readonly TimeSpan UpdateRecheckInterval = TimeSpan.FromMinutes(30);
+
+        private readonly IUpdateService _updateService;
+        private readonly System.Windows.Forms.Timer _updateTimer = new();
+        private UpdateInfo? _availableUpdate;
+        private TitleBarButton? _updateButton;
+        private bool _updateDialogOpen;
+
+        private void SetupAutoUpdate()
+        {
+            Text += $" – v{_updateService.CurrentVersion}";
+            if (!_updateService.IsSupported) return;
+
+            Shown += async (_, _) =>
+            {
+                _ = _updateService.CleanupAsync();
+                await CheckForUpdateAsync(showDialog: true);
+            };
+            _updateTimer.Interval = (int)UpdateRecheckInterval.TotalMilliseconds;
+            _updateTimer.Tick += async (_, _) => await CheckForUpdateAsync(showDialog: false);
+            _updateTimer.Start();
+        }
+
+        /// <param name="showDialog">true chỉ khi vừa mở app: đang dùng dở thì chỉ hiện nút trên thanh tiêu đề.</param>
+        private async Task CheckForUpdateAsync(bool showDialog)
+        {
+            UpdateInfo? update;
+            try
+            {
+                update = await _updateService.CheckAsync(CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException
+                                           or System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException)
+            {
+                Log("Không kiểm tra được phiên bản mới: " + ex.Message.Split('\n')[0]);
+                return;
+            }
+            if (update is null) return;
+
+            _availableUpdate = update;
+            var text = $"⬆ Cập nhật v{update.Version}";
+            if (_updateButton is null)
+            {
+                _updateButton = new TitleBarButton(this, text, () => ShowUpdateDialog());
+                _updateButton.Show();
+            }
+            else
+            {
+                _updateButton.SetText(text);
+            }
+
+            // Không làm phiền khi đang khai hoặc đang mở hộp thoại khác.
+            if (showDialog && !IsSessionActive && CanFocus)
+                ShowUpdateDialog();
+        }
+
+        private void ShowUpdateDialog()
+        {
+            if (_availableUpdate is not { } update || _updateDialogOpen) return;
+            if (IsSessionActive)
+            {
+                MessageBox.Show(this, "Đang mở Chrome để khai báo. Hãy bấm \"Dừng\" hoặc nộp xong rồi đóng Chrome trước khi cập nhật.",
+                    "Cập nhật", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            _updateDialogOpen = true;
+            try
+            {
+                using var dialog = new UpdateForm(update, _updateService);
+                if (dialog.ShowDialog(this) == DialogResult.OK && dialog.PackageFolder is { } package)
+                    _ = ApplyUpdateAsync(update, package);
+            }
+            finally
+            {
+                _updateDialogOpen = false;
+            }
+        }
+
+        private async Task ApplyUpdateAsync(UpdateInfo update, string package)
+        {
+            UseWaitCursor = true;
+            SetStatus($"Đang cài bản {update.Version}...", Color.Navy);
+            try
+            {
+                SaveSettings();
+                // Driver Playwright còn chạy sẽ giữ file trong .playwright.
+                if (_automation is { } automation)
+                {
+                    _automation = null;
+                    _stopInProgress = true;
+                    await automation.DisposeAsync();
+                    _stopInProgress = false;
+                }
+
+                _updateService.ApplyAndRestart(package);
+                _closing = true;
+                Application.Exit();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+            {
+                UseWaitCursor = false;
+                Log("Cập nhật thất bại: " + ex.Message);
+                SetStatus("Cập nhật thất bại, app vẫn ở bản cũ.", Color.Firebrick);
+                MessageBox.Show(this, $"Không cài được bản cập nhật. App vẫn ở bản {_updateService.CurrentVersion}.\n\n{ex.Message}",
+                    "Cập nhật", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
 
         // ------------------------------------------------------------------ xoá khách
 
@@ -622,7 +772,12 @@ namespace App
 
         private async void btnStart_Click(object sender, EventArgs e)
         {
-            if (_running) return;
+            if (IsSessionActive)
+            {
+                await StopSessionAsync();
+                return;
+            }
+            _stopRequested = false;
             SaveSettings();
 
             foreach (var p in _passengers)
@@ -642,14 +797,19 @@ namespace App
 
             var group = BuildGroup();
             _automation ??= new PrearrivalAutomation(_settings);
-            _cts = new CancellationTokenSource();
+            var cts = new CancellationTokenSource();
+            _cts = cts;
             SetRunning(true);
             var active = _passengers.ToList();
             Log($"Bắt đầu khai {active.Count} khách – {group.Nationality.DisplayName} – ngày đến {group.ArrivalDate:dd/MM/yyyy}.");
 
             try
             {
-                await _automation.RunAsync(group, active, this, _cts.Token);
+                await _automation.RunAsync(group, active, this, cts.Token);
+            }
+            catch (Exception) when (_stopRequested)
+            {
+                // Chrome bị đóng giữa chừng (nút Dừng hoặc người dùng tự đóng): StopSession/BrowserClosed đã xử lý.
             }
             catch (OperationCanceledException)
             {
@@ -664,11 +824,83 @@ namespace App
             }
             finally
             {
-                SetRunning(false);
-                _cts.Dispose();
-                _cts = null;
+                // Lần chạy đã bị StopSession kết thúc thì không đụng tới trạng thái của lần chạy sau.
+                if (ReferenceEquals(_cts, cts))
+                {
+                    _cts = null;
+                    SetRunning(false);
+                }
+                cts.Dispose();
                 gridPassengers.Refresh();
             }
+        }
+
+        /// <summary>Nút "Dừng": huỷ việc điền, đóng Chrome của app, trở lại màn hình chính (giữ danh sách khách).</summary>
+        private async Task StopSessionAsync()
+        {
+            _stopRequested = true;
+            _stopInProgress = true;
+            UpdateStartButton();
+            SetStatus("Đang dừng và đóng Chrome...", Color.DimGray);
+
+            CancelCurrentRun();
+            if (_automation is { } automation)
+            {
+                _automation = null;
+                try
+                {
+                    await automation.DisposeAsync();
+                }
+                catch (Exception ex) when (ex is IOException or InvalidOperationException)
+                {
+                    Log("Lỗi khi đóng Chrome: " + ex.Message.Split('\n')[0]);
+                }
+            }
+
+            _stopInProgress = false;
+            ReturnToMainScreen("Đã dừng và đóng Chrome.");
+        }
+
+        private void CancelCurrentRun()
+        {
+            _pendingDecision?.TrySetResult(UserDecision.Stop);
+            _pendingDecision = null;
+            _pendingPassenger = null;
+            var cts = _cts;
+            _cts = null;
+            cts?.Cancel();
+        }
+
+        /// <summary>Đưa giao diện về trạng thái chưa chạy: danh sách khách giữ nguyên, trạng thái khách về "Chờ".</summary>
+        private void ReturnToMainScreen(string message)
+        {
+            _reviewForm?.Close();
+            _reviewForm = null;
+            foreach (var p in _passengers)
+            {
+                p.State = PassengerState.Pending;
+                p.StatusMessage = "";
+            }
+            SetRunning(false);
+            RunValidation(showSummary: false);
+            Log(message);
+        }
+
+        public void BrowserClosed()
+        {
+            if (_closing || IsDisposed || !IsHandleCreated) return;
+            if (InvokeRequired)
+            {
+                BeginInvoke(BrowserClosed);
+                return;
+            }
+            // Đóng do nút Dừng: StopSessionAsync đã xử lý tiếp.
+            if (_stopInProgress) return;
+
+            // Người dùng tự đóng cửa sổ Chrome.
+            _stopRequested = true;
+            CancelCurrentRun();
+            ReturnToMainScreen("Chrome đã đóng – trở lại màn hình chính.");
         }
 
         private void SetRunning(bool running)
@@ -677,7 +909,7 @@ namespace App
             foreach (Control c in new Control[] { txtEmail, cboNationality, cboArrival, btnBrowse, btnBrowseExcel,
                                                   btnReload, btnValidate, btnDelete, btnNewGroup })
                 c.Enabled = !running;
-            btnStart.Enabled = !running && _dataValid;
+            UpdateStartButton();
             btnStop.Enabled = running;
             UpdateManualVisaControls();
             if (!running) SetDecisionButtons(false, false);
@@ -692,8 +924,10 @@ namespace App
                 if (answer == DialogResult.Cancel) return;
                 if (answer == DialogResult.Yes)
                 {
+                    _stopInProgress = true;
                     await _automation.DisposeAsync();
                     _automation = null;
+                    _stopInProgress = false;
                 }
             }
 
@@ -779,6 +1013,109 @@ namespace App
             if (requiresUser) SystemSounds.Exclamation.Play();
         }
 
+        // ------------------------------------------------------------------ file nguồn và đối chiếu trang Xem lại
+
+        private void gridPassengers_CellContentClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.ColumnIndex == colSource.Index && PassengerAt(e.RowIndex) is { } p)
+                OpenSourceFile(p.SourcePath);
+        }
+
+        private void OpenSourceFile(string path)
+        {
+            if (!File.Exists(path))
+            {
+                MessageBox.Show(this, $"Không tìm thấy file:\n{path}", "File nguồn", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            }
+            catch (System.ComponentModel.Win32Exception ex)
+            {
+                MessageBox.Show(this, $"Không mở được file:\n{path}\n\n{ex.Message}", "File nguồn", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        public void ReviewPageReached(string pageText)
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(() => ReviewPageReached(pageText));
+                return;
+            }
+            Log("Chrome đã tới trang \"Xem lại và nộp\" – đang đối chiếu với file nguồn...");
+            _ = VerifyReviewPageAsync(pageText);
+        }
+
+        private async void btnVerifyReview_Click(object? sender, EventArgs e)
+        {
+            var text = _automation is null ? null : await _automation.ReadReviewPageAsync();
+            if (text is null)
+            {
+                MessageBox.Show(this, "Chrome chưa ở trang \"Xem lại và nộp\".\nBấm nút này khi đã tới trang đó.",
+                    "Đối chiếu", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            await VerifyReviewPageAsync(text);
+        }
+
+        /// <summary>Đọc lại file nguồn (PDF/Excel) và so từng trường với trang "Xem lại và nộp".</summary>
+        private async Task VerifyReviewPageAsync(string pageText)
+        {
+            if (_verifying) return;
+            _verifying = true;
+            try
+            {
+                var group = BuildGroup();
+                var passengers = _passengers.Where(p => p.State != PassengerState.Skipped).ToList();
+                var cards = ReviewPageParser.Parse(pageText);
+                var builder = new ReviewExpectationBuilder(_pdfExtractor, _reader);
+                var report = await Task.Run(() =>
+                {
+                    var expected = builder.Build(passengers, group);
+                    return ReviewVerifier.Verify(cards, expected, (card, _) => ReviewExpectationBuilder.PositionFields(card, group));
+                });
+                ShowReviewReport(report, passengers);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException)
+            {
+                Log("Lỗi khi đối chiếu: " + ex.Message);
+                SetStatus("Lỗi khi đối chiếu: " + ex.Message.Split('\n')[0], Color.Firebrick);
+            }
+            finally
+            {
+                _verifying = false;
+            }
+        }
+
+        private void ShowReviewReport(ReviewReport report, IReadOnlyList<Passenger> passengers)
+        {
+            foreach (var p in passengers)
+            {
+                var failed = report.Checks.Where(c => c.Passenger == p && !c.Ok).ToList();
+                p.State = failed.Count == 0 ? PassengerState.Verified : PassengerState.VerifyFailed;
+                p.StatusMessage = failed.Count == 0
+                    ? "Khớp với file nguồn"
+                    : "Sai: " + string.Join("; ", failed.Select(c => $"{c.Field}: web \"{c.WebValue}\" ≠ \"{c.ExpectedValue}\""));
+            }
+            gridPassengers.Refresh();
+
+            var summary = report.AllOk
+                ? $"✔ Đối chiếu xong: {report.CardCount} khách, {report.Checks.Count} trường đều khớp. Có thể nộp."
+                : $"✖ Đối chiếu: {report.FailedCount} trường sai – xem cửa sổ kết quả. ĐỪNG nộp khi còn sai.";
+            SetStatus(summary, report.AllOk ? Color.DarkGreen : Color.Firebrick);
+            Log(summary);
+            foreach (var c in report.Checks.Where(c => !c.Ok))
+                Log($"✖ {(c.Passenger is { } p ? $"STT {p.No} – {p.FullName}" : $"#{c.CardNumber} trên web")}{c.Passenger?.SourceSuffix} | {c.Field}: web \"{c.WebValue}\" ≠ \"{c.ExpectedValue}\" ({c.Source})");
+            if (!report.AllOk) SystemSounds.Exclamation.Play();
+
+            _reviewForm?.Close();
+            _reviewForm = new ReviewResultForm(report, passengers.Count, OpenSourceFile);
+            _reviewForm.Show(this);
+        }
+
         public void FileDownloaded(string path)
         {
             if (InvokeRequired)
@@ -856,11 +1193,20 @@ namespace App
         {
             if (PassengerAt(e.RowIndex) is not { } p) return;
 
+            // Cột File nguồn: hiện tên file, đường dẫn đầy đủ xem ở tooltip.
+            if (e.ColumnIndex == colSource.Index && e.Value is string sourcePath)
+            {
+                e.Value = Path.GetFileName(sourcePath);
+                e.FormattingApplied = true;
+            }
+
             var style = e.CellStyle!;
             style.BackColor = p.State switch
             {
                 PassengerState.Filled => Color.Honeydew,
                 PassengerState.Skipped => Color.Gainsboro,
+                PassengerState.Verified => Color.Honeydew,
+                PassengerState.VerifyFailed => Color.MistyRose,
                 PassengerState.Filling => Color.LightYellow,
                 PassengerState.NeedsAttention => Color.MistyRose,
                 _ => gridPassengers.DefaultCellStyle.BackColor
@@ -876,7 +1222,7 @@ namespace App
             // Cột Thông báo: chữ đỏ khi dòng có lỗi (dữ liệu hoặc trên site), cam khi chỉ có cảnh báo.
             if (e.ColumnIndex == colMessage.Index)
             {
-                if (p.HasErrors || p.State == PassengerState.NeedsAttention)
+                if (p.HasErrors || p.State is PassengerState.NeedsAttention or PassengerState.VerifyFailed)
                 {
                     style.ForeColor = Color.Red;
                     style.Font = new Font(gridPassengers.Font, FontStyle.Bold);
@@ -889,6 +1235,11 @@ namespace App
         private void gridPassengers_CellToolTipTextNeeded(object sender, DataGridViewCellToolTipTextNeededEventArgs e)
         {
             if (e.ColumnIndex < 0 || PassengerAt(e.RowIndex) is not { } p) return;
+            if (e.ColumnIndex == colSource.Index)
+            {
+                e.ToolTipText = p.SourcePath;
+                return;
+            }
             var field = gridPassengers.Columns[e.ColumnIndex].DataPropertyName;
             var messages = p.Issues.Where(i => i.Field == field).Select(i => i.Message).ToList();
             if (messages.Count > 0)
